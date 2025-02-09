@@ -6,10 +6,12 @@ export const getInstructorClient = (
   apiKey: string,
   abortSignal: AbortSignal,
   mode: 'JSON' | 'FUNCTIONS' | 'TOOLS' | 'MD_JSON' | 'JSON_SCHEMA' = 'JSON',
+  baseUrl: string,
 ) => {
   const openai = new OpenAI({
     apiKey,
     dangerouslyAllowBrowser: true,
+    baseURL: baseUrl,
   });
 
   const originalCompletionsCreate = openai.chat.completions.create;

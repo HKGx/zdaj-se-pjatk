@@ -28,7 +28,7 @@ import { useLocalStorageState } from 'hooks/useLocalStorageState/useLocalStorage
 import { useTrackEvent } from 'hooks/useTrackEvent/useTrackEvent';
 import { Question } from 'validators/subjects';
 import { AiTeacherResponseSchema, CorrectAnswersIndexSchema, ExplanationSchema } from 'validators/ai';
-import { OpenAiModel, OpenAiToken } from 'validators/localStorage';
+import { OpenAiModel, OpenAiToken, AiBaseUrl } from 'validators/localStorage';
 
 import { Answer } from '../Answer/Answer';
 
@@ -47,7 +47,6 @@ Always use the same language for the output as the question and answers given by
 If the question is in English, answer in English. If the question is in Polish, answer in Polish.
 
 Don't include the question in the response. Just the answers and explanations.
-Don't start the explanation with "The correct answer is" or "The incorrect answer is".
     `;
 
 interface QuestionAIChatDialogProps {
@@ -91,6 +90,7 @@ interface QuestionAIChatProps {
 export const QuestionAIChat = ({ question }: QuestionAIChatProps) => {
   const [aiCorrectAnswers, setAICorrectAnswers] = useState<number[] | null>(null);
   const [openAiToken, setOpenAiToken, clearOpenAiToken] = useOpenAiToken();
+  const [aiBaseUrl, setAiBaseUrl, clearAiBaseUrl] = useAiBaseUrl();
 
   return (
     <div className="flex flex-col min-w-0 gap-4">
@@ -99,34 +99,40 @@ export const QuestionAIChat = ({ question }: QuestionAIChatProps) => {
         <QuestionAIResponse
           question={question}
           openAiToken={openAiToken}
+          clearAiBaseUrl={clearAiBaseUrl}
           clearOpenAiToken={clearOpenAiToken}
           aiCorrectAnswers={aiCorrectAnswers}
           setAICorrectAnswers={setAICorrectAnswers}
         />
       )}
-      {openAiToken == null && <OpenAiTokenInput setOpenAiToken={setOpenAiToken} />}
+      {openAiToken == null && (
+        <OpenAiTokenInput setOpenAiToken={setOpenAiToken} setAiBaseUrl={setAiBaseUrl} aiBaseUrl={aiBaseUrl} />
+      )}
     </div>
   );
 };
 
 interface OpenAiTokenInputProps {
+  setAiBaseUrl: (value: string, saveForLater: boolean) => void;
   setOpenAiToken: (value: string, saveForLater: boolean) => void;
+  aiBaseUrl: string;
 }
-const OpenAiTokenInput = ({ setOpenAiToken }: OpenAiTokenInputProps) => {
+const OpenAiTokenInput = ({ setOpenAiToken, setAiBaseUrl, aiBaseUrl }: OpenAiTokenInputProps) => {
   const trackEvent = useTrackEvent();
   const [currentToken, setCurrentToken] = useState('');
   const [savedForLater, setSavedForLater] = useState(true);
+  const [currentBaseUrl, setCurrentBaseUrl] = useState(aiBaseUrl);
+
   const onSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
-      if (currentToken.trim() === '') {
-        return;
-      }
+      if (currentToken.trim() === '' || currentBaseUrl.trim() === '') return;
 
       trackEvent('GPTModal', 'SetToken', 'SavedForLater', savedForLater ? 1 : 0);
+      setAiBaseUrl(currentBaseUrl, savedForLater);
       setOpenAiToken(currentToken, savedForLater);
     },
-    [currentToken, savedForLater, setOpenAiToken, trackEvent],
+    [currentToken, currentBaseUrl, savedForLater, setOpenAiToken, trackEvent],
   );
 
   return (
@@ -137,10 +143,7 @@ const OpenAiTokenInput = ({ setOpenAiToken }: OpenAiTokenInputProps) => {
       <form onSubmit={onSubmit}>
         <div className="flex w-full items-end gap-2">
           <div className="flex flex-col gap-2 flex-1">
-            <label
-              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex items-center gap-1"
-              htmlFor="openai-token"
-            >
+            <label className="text-sm font-medium leading-none flex items-center gap-1" htmlFor="openai-token">
               Klucz API OpenAI
               <Tooltip>
                 <TooltipContent>Gdzie znajdę klucz API OpenAI?</TooltipContent>
@@ -162,8 +165,18 @@ const OpenAiTokenInput = ({ setOpenAiToken }: OpenAiTokenInputProps) => {
               className="col-span-3"
               type="text"
             />
+            <label className="text-sm font-medium leading-none" htmlFor="openai-baseurl">
+              Link do API OpenAI
+            </label>
+            <Input
+              id="openai-baseurl"
+              value={currentBaseUrl}
+              onChange={(e) => setCurrentBaseUrl(e.target.value)}
+              type="text"
+              placeholder="https://api.openai.com"
+            />
           </div>
-          <Button disabled={currentToken.trim() === ''}>Zapisz</Button>
+          <Button disabled={currentToken.trim() === '' || currentBaseUrl.trim() === ''}>Zapisz</Button>
         </div>
         <div className="flex items-center space-x-2 col-span-3 mt-4">
           <Checkbox
@@ -173,7 +186,6 @@ const OpenAiTokenInput = ({ setOpenAiToken }: OpenAiTokenInputProps) => {
               if (state === 'indeterminate') {
                 return;
               }
-
               setSavedForLater(state);
             }}
           />
@@ -200,6 +212,7 @@ const OpenAiTokenInput = ({ setOpenAiToken }: OpenAiTokenInputProps) => {
 interface QuestionAIResponseProps {
   question: Question;
   openAiToken: string;
+  clearAiBaseUrl: () => void;
   clearOpenAiToken: () => void;
   aiCorrectAnswers: number[] | null;
   setAICorrectAnswers: (value: number[] | null) => void;
@@ -210,13 +223,20 @@ const QuestionAIResponse = ({
   aiCorrectAnswers,
   openAiToken,
   clearOpenAiToken,
+  clearAiBaseUrl,
 }: QuestionAIResponseProps) => {
   const trackEvent = useTrackEvent();
   const [openAiModel, setOpenAiModel, clearStateOpenAiModel] = useLocalStorageState(OpenAiModel);
+  const [openAiBaseUrl, setOpenAiBaseUrl, clearStateOpenAiBaseUrl] = useLocalStorageState(AiBaseUrl);
   const [output, setOutput] = useState<Partial<AiTeacherResponseSchema>>({});
   const [status, setStatus] = useState<'idle' | 'working' | 'done' | 'cancelled'>('idle');
 
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  const clearTokenAndBaseUrl = useCallback(() => {
+    clearOpenAiToken();
+    clearAiBaseUrl();
+  }, [clearAiBaseUrl, clearOpenAiToken]);
 
   const errorHandler = useErrorHandler();
   const runAICompletion = useCallback(async () => {
@@ -224,7 +244,7 @@ const QuestionAIResponse = ({
       const abortController = new AbortController();
       abortControllerRef.current?.abort();
       abortControllerRef.current = abortController;
-      const client = getInstructorClient(openAiToken, abortControllerRef.current.signal, 'JSON');
+      const client = getInstructorClient(openAiToken, abortControllerRef.current.signal, 'JSON', openAiBaseUrl);
 
       if (status === 'working') {
         setStatus('cancelled');
@@ -333,6 +353,25 @@ const QuestionAIResponse = ({
     }
   };
 
+  // NEW: Add state for handling the custom model dialog.
+  const [isCustomModelDialogOpen, setIsCustomModelDialogOpen] = useState(false);
+  const [customModel, setCustomModel] = useState('');
+
+  const handleCustomModelSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      if (customModel.trim() !== '') {
+        setOpenAiModel(customModel);
+        setIsCustomModelDialogOpen(false);
+      }
+    },
+    [customModel, setOpenAiModel]
+  );
+
+  // NEW: Determine if a custom model is selected.
+  const isCustomSelected =
+    openAiModel != null && openAiModel.trim() !== '' && openAiModel !== 'gpt-4o' && openAiModel !== 'gpt-4o-mini';
+
   const optionsButton = (
     <DropdownMenu>
       <Tooltip>
@@ -398,8 +437,21 @@ const QuestionAIResponse = ({
           </Tooltip>
         </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={!!isCustomSelected}
+          onCheckedChange={(checked) => {
+            if (checked) {
+              setIsCustomModelDialogOpen(true);
+            } else {
+              clearStateOpenAiModel();
+            }
+          }}
+        >
+          Inny {isCustomSelected && `(${openAiModel})`}
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
-          onClick={clearOpenAiToken}
+          onClick={clearTokenAndBaseUrl}
           className="bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200 focus:bg-red-100 focus:text-red-900 data-[disabled]:opacity-50 dark:focus:bg-red-800 dark:focus:text-red-50"
         >
           <Trash className="mr-2 h-4 w-4" />
@@ -411,27 +463,51 @@ const QuestionAIResponse = ({
 
   if (status === 'idle' || (status === 'cancelled' && aiCorrectAnswers == null)) {
     return (
-      <Card className={cn(cardClassNames)}>
-        <QuestionAIAnswer
-          lang="pl"
-          correctExplanations={[]}
-          incorrectExplanations={[]}
-          aiCorrectAnswers={aiCorrectAnswers}
-        />
-
-        <div className="absolute top-0 left-0 rounded-lg overflow-hidden flex items-center justify-center w-full h-full backdrop-blur-sm bg-radial-gradient to-purple-50/50 from-purple-100 dark:from-purple-800/50 dark:to-purple-950/30">
-          <Button
-            variant="default"
-            size="lg"
-            onClick={runAICompletion}
-            className="bg-gradient-to-tl text-white from-purple-500 to-purple-600 dark:from-purple-700 dark:to-purple-500"
-          >
-            <Sparkles width="1rem" height="1rem" className="mr-2" absoluteStrokeWidth />
-            Sprawdź
-          </Button>
-          <div className="absolute top-2 right-2">{optionsButton}</div>
-        </div>
-      </Card>
+      <>
+        <Card className={cn(cardClassNames)}>
+          <QuestionAIAnswer
+            lang="pl"
+            correctExplanations={[]}
+            incorrectExplanations={[]}
+            aiCorrectAnswers={aiCorrectAnswers}
+          />
+          <div className="absolute top-0 left-0 rounded-lg overflow-hidden flex items-center justify-center w-full h-full backdrop-blur-sm bg-radial-gradient to-purple-50/50 from-purple-100 dark:from-purple-800/50 dark:to-purple-950/30">
+            <Button
+              variant="default"
+              size="lg"
+              onClick={runAICompletion}
+              className="bg-gradient-to-tl text-white from-purple-500 to-purple-600 dark:from-purple-700 dark:to-purple-500"
+            >
+              <Sparkles width="1rem" height="1rem" className="mr-2" absoluteStrokeWidth />
+              Sprawdź
+            </Button>
+            <div className="absolute top-2 right-2">{optionsButton}</div>
+          </div>
+        </Card>
+        
+        <Dialog open={isCustomModelDialogOpen} onOpenChange={setIsCustomModelDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Wpisz model AI</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleCustomModelSubmit}>
+              <Input
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                placeholder="Nazwa modelu"
+              />
+              <div className="flex justify-end mt-4 gap-2">
+                <Button type="button" onClick={() => setIsCustomModelDialogOpen(false)}>
+                  Anuluj
+                </Button>
+                <Button type="submit">
+                  Zapisz
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </>
     );
   }
 
@@ -443,37 +519,61 @@ const QuestionAIResponse = ({
   );
 
   return (
-    <Card className={cardClassNames}>
-      <div className="flex gap-2 absolute top-2 right-2">
-        {status === 'done' && <DonateButton />}
-        <Tooltip>
-          <TooltipPortal>
-            <TooltipContent>{tooltip}</TooltipContent>
-          </TooltipPortal>
-          <TooltipTrigger title={tooltip} asChild>
-            <Button variant="outline" size="icon-sm" onClick={runAICompletion} className="group">
-              {status === 'working' && (
-                <>
-                  <Loader2 width="1rem" height="1rem" className="animate-spin group-hover:hidden" absoluteStrokeWidth />
-                  <X width="1rem" height="1rem" className="hidden group-hover:block" />
-                </>
-              )}
-              {(status === 'done' || status === 'cancelled') && (
-                <RotateCcw width="1rem" height="1rem" absoluteStrokeWidth />
-              )}
-            </Button>
-          </TooltipTrigger>
-        </Tooltip>
-        {status !== 'working' && optionsButton}
-      </div>
-
-      <QuestionAIAnswer
-        lang={output.questionLanguage ?? 'unknown'}
-        correctExplanations={correctExplanations}
-        incorrectExplanations={incorrectExplanations}
-        aiCorrectAnswers={aiCorrectAnswers}
-      />
-    </Card>
+    <>
+      <Card className={cardClassNames}>
+        <div className="flex gap-2 absolute top-2 right-2">
+          {status === 'done' && <DonateButton />}
+          <Tooltip>
+            <TooltipPortal>
+              <TooltipContent>{tooltip}</TooltipContent>
+            </TooltipPortal>
+            <TooltipTrigger title={tooltip} asChild>
+              <Button variant="outline" size="icon-sm" onClick={runAICompletion} className="group">
+                {status === 'working' && (
+                  <>
+                    <Loader2 width="1rem" height="1rem" className="animate-spin group-hover:hidden" absoluteStrokeWidth />
+                    <X width="1rem" height="1rem" className="hidden group-hover:block" />
+                  </>
+                )}
+                {(status === 'done' || status === 'cancelled') && (
+                  <RotateCcw width="1rem" height="1rem" absoluteStrokeWidth />
+                )}
+              </Button>
+            </TooltipTrigger>
+          </Tooltip>
+          {status !== 'working' && optionsButton}
+        </div>
+        <QuestionAIAnswer
+          lang={output.questionLanguage ?? 'unknown'}
+          correctExplanations={correctExplanations}
+          incorrectExplanations={incorrectExplanations}
+          aiCorrectAnswers={aiCorrectAnswers}
+        />
+      </Card>
+      
+      <Dialog open={isCustomModelDialogOpen} onOpenChange={setIsCustomModelDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Wpisz model AI</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCustomModelSubmit}>
+            <Input
+              value={customModel}
+              onChange={(e) => setCustomModel(e.target.value)}
+              placeholder="Nazwa modelu"
+            />
+            <div className="flex justify-end mt-4 gap-2">
+              <Button type="button" onClick={() => setIsCustomModelDialogOpen(false)}>
+                Anuluj
+              </Button>
+              <Button type="submit">
+                Zapisz
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
 
@@ -575,4 +675,24 @@ const useOpenAiToken = () => {
   }, [lsClearOpenAiToken]);
 
   return [openAiToken, setOpenAiToken, clearOpenAiToken] as const;
+};
+
+const useAiBaseUrl = () => {
+  const [lsAiBaseUrl, lsSetAiBaseUrl, lsClearAiBaseUrl] = useLocalStorageState(AiBaseUrl);
+  const [localAiBaseUrl, localSetAiBaseUrl] = useState<string | null>(lsAiBaseUrl);
+
+  const aiBaseUrl = useMemo(() => localAiBaseUrl ?? lsAiBaseUrl, [localAiBaseUrl, lsAiBaseUrl]);
+  const setAiBaseUrl = useCallback(
+    (value: string) => {
+      lsSetAiBaseUrl(value);
+      localSetAiBaseUrl(value);
+    },
+    [lsSetAiBaseUrl],
+  );
+  const clearAiBaseUrl = useCallback(() => {
+    lsClearAiBaseUrl();
+    localSetAiBaseUrl(lsAiBaseUrl);
+  }, [lsClearAiBaseUrl]);
+
+  return [aiBaseUrl, setAiBaseUrl, clearAiBaseUrl] as const;
 };
