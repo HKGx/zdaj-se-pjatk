@@ -87,6 +87,7 @@ export const QuestionAIChatDialog = ({ isOpen, closeModal, question }: QuestionA
 interface QuestionAIChatProps {
   question: Question;
 }
+
 export const QuestionAIChat = ({ question }: QuestionAIChatProps) => {
   const [aiCorrectAnswers, setAICorrectAnswers] = useState<number[] | null>(null);
   const [openAiToken, setOpenAiToken, clearOpenAiToken] = useOpenAiToken();
@@ -209,6 +210,24 @@ const OpenAiTokenInput = ({ setOpenAiToken, setAiBaseUrl, aiBaseUrl }: OpenAiTok
   );
 };
 
+const OpenAIModelsConfigurations = {
+  'o3-mini': {
+    name: 'o3 mini',
+    description: 'Model przeprowadzający kroki rozumowania, dokładny, szybszy i tańszy od 4o.',
+    pricing: 2,
+  },
+  'gpt-4o': {
+    name: 'GPT-4o',
+    description: 'Bardziej dokładny, lecz droższy. Dostępny w OpenAI API tylko dla płacących klientów.',
+    pricing: 3,
+  },
+  'gpt-4o-mini': {
+    name: 'GPT-4o mini',
+    description: 'Mniej dokładny, ale tańszy od wszystkich innych modeli.',
+    pricing: 1,
+  },
+};
+
 interface QuestionAIResponseProps {
   question: Question;
   openAiToken: string;
@@ -217,6 +236,7 @@ interface QuestionAIResponseProps {
   aiCorrectAnswers: number[] | null;
   setAICorrectAnswers: (value: number[] | null) => void;
 }
+
 const QuestionAIResponse = ({
   question,
   setAICorrectAnswers,
@@ -227,7 +247,7 @@ const QuestionAIResponse = ({
 }: QuestionAIResponseProps) => {
   const trackEvent = useTrackEvent();
   const [openAiModel, setOpenAiModel, clearStateOpenAiModel] = useLocalStorageState(OpenAiModel);
-  const [openAiBaseUrl, setOpenAiBaseUrl, clearStateOpenAiBaseUrl] = useLocalStorageState(AiBaseUrl);
+  const [openAiBaseUrl] = useAiBaseUrl();
   const [output, setOutput] = useState<Partial<AiTeacherResponseSchema>>({});
   const [status, setStatus] = useState<'idle' | 'working' | 'done' | 'cancelled'>('idle');
 
@@ -353,24 +373,24 @@ const QuestionAIResponse = ({
     }
   };
 
-  // NEW: Add state for handling the custom model dialog.
   const [isCustomModelDialogOpen, setIsCustomModelDialogOpen] = useState(false);
   const [customModel, setCustomModel] = useState('');
 
   const handleCustomModelSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
-      if (customModel.trim() !== '') {
-        setOpenAiModel(customModel);
-        setIsCustomModelDialogOpen(false);
-      }
+      if (customModel.trim() === '') return;
+
+      setOpenAiModel(customModel);
+      setIsCustomModelDialogOpen(false);
     },
-    [customModel, setOpenAiModel]
+    [customModel, setOpenAiModel],
   );
 
-  // NEW: Determine if a custom model is selected.
-  const isCustomSelected =
-    openAiModel != null && openAiModel.trim() !== '' && openAiModel !== 'gpt-4o' && openAiModel !== 'gpt-4o-mini';
+  const isCustomSelected = useMemo(
+    () => openAiModel != null && !Object.keys(OpenAIModelsConfigurations).includes(openAiModel),
+    [openAiModel],
+  );
 
   const optionsButton = (
     <DropdownMenu>
@@ -389,54 +409,32 @@ const QuestionAIResponse = ({
       <DropdownMenuContent className="w-56" align="end" side="bottom">
         <DropdownMenuLabel>Model AI</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuCheckboxItem checked={openAiModel === 'gpt-4o'} onCheckedChange={onCheckedChange('gpt-4o')}>
-          GPT-4o
-          <Tooltip disableHoverableContent>
-            <TooltipPortal>
-              <TooltipContent className="max-w-xs text-center">
-                Bardziej dokładny, lecz droższy. Dostępny w OpenAI API tylko dla płacących klientów. Kliknij by zobaczyć
-                ceny.
-              </TooltipContent>
-            </TooltipPortal>
-            <TooltipTrigger asChild>
-              <a
-                href="https://openai.com/api/pricing/"
-                target="_blank"
-                rel="noreferrer"
-                className="ml-2 inline-flex"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <BadgeDollarSign className="w-4 h-4" />
-                <BadgeDollarSign className="w-4 h-4 -ml-2 first:[&_path]:fill-white dark:first:[&_path]:fill-gray-950" />
-              </a>
-            </TooltipTrigger>
-          </Tooltip>
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem
-          checked={openAiModel === 'gpt-4o-mini'}
-          onCheckedChange={onCheckedChange('gpt-4o-mini')}
-        >
-          GPT-4o mini
-          <Tooltip disableHoverableContent>
-            <TooltipPortal>
-              <TooltipContent className="max-w-xs text-center">
-                Mniej dokładny, ale tańszy. Kliknij by zobaczyć ceny.
-              </TooltipContent>
-            </TooltipPortal>
-            <TooltipTrigger asChild>
-              <a
-                href="https://openai.com/api/pricing/"
-                target="_blank"
-                rel="noreferrer"
-                className="ml-2"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <BadgeDollarSign className="w-4 h-4" />
-              </a>
-            </TooltipTrigger>
-          </Tooltip>
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuSeparator />
+        {Object.entries(OpenAIModelsConfigurations).map(([key, { name, description }]) => (
+          <DropdownMenuCheckboxItem key={key} checked={openAiModel === key} onCheckedChange={onCheckedChange(key)}>
+            {name}
+            <Tooltip disableHoverableContent>
+              <TooltipPortal>
+                <TooltipContent>{description}</TooltipContent>
+              </TooltipPortal>
+              <TooltipTrigger asChild>
+                <a
+                  href="https://openai.com/api/pricing/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-2 inline-flex"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {Array.from(
+                    { length: OpenAIModelsConfigurations[key as keyof typeof OpenAIModelsConfigurations].pricing },
+                    (_, i) => (
+                      <BadgeDollarSign key={i} className="w-4 h-4" />
+                    ),
+                  )}
+                </a>
+              </TooltipTrigger>
+            </Tooltip>
+          </DropdownMenuCheckboxItem>
+        ))}
         <DropdownMenuCheckboxItem
           checked={!!isCustomSelected}
           onCheckedChange={(checked) => {
@@ -484,25 +482,19 @@ const QuestionAIResponse = ({
             <div className="absolute top-2 right-2">{optionsButton}</div>
           </div>
         </Card>
-        
+
         <Dialog open={isCustomModelDialogOpen} onOpenChange={setIsCustomModelDialogOpen}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Wpisz model AI</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleCustomModelSubmit}>
-              <Input
-                value={customModel}
-                onChange={(e) => setCustomModel(e.target.value)}
-                placeholder="Nazwa modelu"
-              />
+              <Input value={customModel} onChange={(e) => setCustomModel(e.target.value)} placeholder="Nazwa modelu" />
               <div className="flex justify-end mt-4 gap-2">
                 <Button type="button" onClick={() => setIsCustomModelDialogOpen(false)}>
                   Anuluj
                 </Button>
-                <Button type="submit">
-                  Zapisz
-                </Button>
+                <Button type="submit">Zapisz</Button>
               </div>
             </form>
           </DialogContent>
@@ -531,7 +523,12 @@ const QuestionAIResponse = ({
               <Button variant="outline" size="icon-sm" onClick={runAICompletion} className="group">
                 {status === 'working' && (
                   <>
-                    <Loader2 width="1rem" height="1rem" className="animate-spin group-hover:hidden" absoluteStrokeWidth />
+                    <Loader2
+                      width="1rem"
+                      height="1rem"
+                      className="animate-spin group-hover:hidden"
+                      absoluteStrokeWidth
+                    />
                     <X width="1rem" height="1rem" className="hidden group-hover:block" />
                   </>
                 )}
@@ -550,25 +547,19 @@ const QuestionAIResponse = ({
           aiCorrectAnswers={aiCorrectAnswers}
         />
       </Card>
-      
+
       <Dialog open={isCustomModelDialogOpen} onOpenChange={setIsCustomModelDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Wpisz model AI</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCustomModelSubmit}>
-            <Input
-              value={customModel}
-              onChange={(e) => setCustomModel(e.target.value)}
-              placeholder="Nazwa modelu"
-            />
+            <Input value={customModel} onChange={(e) => setCustomModel(e.target.value)} placeholder="Nazwa modelu" />
             <div className="flex justify-end mt-4 gap-2">
               <Button type="button" onClick={() => setIsCustomModelDialogOpen(false)}>
                 Anuluj
               </Button>
-              <Button type="submit">
-                Zapisz
-              </Button>
+              <Button type="submit">Zapisz</Button>
             </div>
           </form>
         </DialogContent>

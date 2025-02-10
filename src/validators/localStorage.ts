@@ -18,5 +18,5 @@ export const OpenAiModel = {
   key: 'openai-model',
   validator: z
     .string(),
-  defaultValue: 'gpt-4o' as const,
+  defaultValue: 'o3-mini' as const,
 } satisfies LocalStorageConfig;
